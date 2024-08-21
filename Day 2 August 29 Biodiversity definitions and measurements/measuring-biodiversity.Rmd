@@ -13,19 +13,19 @@ biological assemblage. The size (e.g., area or volume) of the sample is often re
 as the sample **grain**. For example, we might use a 1m^2^ quadrat to 
 sample the benthic community on a coral reef.
 
-![](/Users/sb25gaqy/Dropbox/4teaching/shanghai-biodiversity-synthesis-course-2024/Day 2/figs/coral quadrat.png)   
+![](/Users/sb25gaqy/Dropbox/4teaching/shanghai-biodiversity-synthesis-course-2024/Day 2 August 29 Biodiversity definitions and measurements/figs/coral quadrat.png)   
 Or use a line intercept transect of a set length (e.g., 50m).
 
-![](/Users/sb25gaqy/Dropbox/4teaching/shanghai-biodiversity-synthesis-course-2024/Day 2/figs/coral transect.png)
+![](/Users/sb25gaqy/Dropbox/4teaching/shanghai-biodiversity-synthesis-course-2024/Day 2 August 29 Biodiversity definitions and measurements/figs/coral transect.png)
 
 
 Then, choose a metric...but, there are *lots* to choose from!
 
 
-![](/Users/sb25gaqy/Dropbox/4teaching/shanghai-biodiversity-synthesis-course-2024/Day 2/figs/magurran2004.jpg){width=50%}
-![](/Users/sb25gaqy/Dropbox/4teaching/shanghai-biodiversity-synthesis-course-2024/Day 2/figs/magurran&mcgill.jpg)
+![](/Users/sb25gaqy/Dropbox/4teaching/shanghai-biodiversity-synthesis-course-2024/Day 2 August 29 Biodiversity definitions and measurements/figs/magurran2004.jpg){width=50%}
+![](/Users/sb25gaqy/Dropbox/4teaching/shanghai-biodiversity-synthesis-course-2024/Day 2 August 29 Biodiversity definitions and measurements/figs/magurran&mcgill.jpg)
 
-![](/Users/sb25gaqy/Dropbox/4teaching/shanghai-biodiversity-synthesis-course-2024/Day 2/figs/mcgill_2010_table9.3.png)
+![](/Users/sb25gaqy/Dropbox/4teaching/shanghai-biodiversity-synthesis-course-2024/Day 2 August 29 Biodiversity definitions and measurements/figs/mcgill_2010_table9.3.png)
 
 The proliferation of metrics is likely due to the multicomponent 
 nature of biodiversity. Different metrics describe (incorporate) three different 
@@ -143,6 +143,8 @@ community_params <- expand_grid(
   # total number of individuals
   J = c(50, 500),
   # evenness of species relative (log) abundance
+  # smaller values result in more even distributions
+  # of species relative abundance
   sdlog = c(0.8,2)) %>% 
   mutate(
     # species mean (log) abundance
@@ -241,37 +243,36 @@ ggplot() +
 Unfortunately, our simplification to three components is only useful for 
 biodiversity accounting at one scale. The shape of the rarefaction curve 
 is again a useful, albeit limited, abstraction of the difficulty ahead: 
-biodiversity scales non-linearly [refs]. The individual-based rarefaction curve
+biodiversity scales non-linearly [@arrhenius1921species; @rosenzweig_species_1995]. 
+The individual-based rarefaction curve
 is often limited because with sufficient 
-sampling effort on the x-axis, the curve cab bend upwards again (e.g., 
-triphasic SAR, [@rosenzweig_species_1995]. The nonlinear scaling of 
+sampling effort on the x-axis, the curve cab bend upwards again, e.g., 
+the Species Area Relationship (SAR) can have bend upwards at very large spatial
+scales [@rosenzweig_species_1995], sometimes referred to as a triphasic SAR. 
+The nonlinear scaling of 
 biodiversity is well known, but not necessarily well understood, particularly the
 potential for non-linear scaling to impact estimates of biodiversity change at
 different scales. One way to approach the non-linear scaling is via autocorrelation
 or within species aggregation [@mcgill_linking_2011].
 
-
-Here we will approach the scale-dependence of biodiversity using an approach
+Here we will approach the scale-dependence of biodiversity using a diversity partition
 introduced by @whittaker_vegetation_1960 that considers two discrete spatial 
-scales and another to relate the two. Specifically, the larger (sometimes 
+scales and another to relate the two [@chase_embracing_2018-3]. 
+Specifically, the larger (sometimes 
 referred to as the regional) scale is often called the gamma ($\gamma$) scale,
 and the smaller (local) scale is called the alpha ($\alpha$) scale (and the mean
 $\alpha$-diversity is $\bar{\alpha}$). Whittaker's 
 diversity partition assumes a multiplicative relationship between the two scales:
 
 $$\gamma = \bar{\alpha} * \beta,$$
-where $\beta$-diversity describes the variation among samples (or sites or time
-points) in species composition.  
-
+where $\beta$-diversity describes the variation among samples in species composition.  
 
 By making scale discrete, we can continue to use the individual-based 
 rarefaction to visualise and describe biodiversity. We'll consider each sample
-as coming from the $\alpha$-scale. And then combine multiple samples to create
+as representing the $\alpha$-scale. And then combine multiple samples to create
 the $\gamma$-scale.
 
 ```{r, warning=FALSE, class.source = 'fold.show', message=FALSE, fig.dim = c(8,4)}
-# set a RNG seed 
-set.seed(55)
 
 # simulate a community with 200 species and 5000 individuals, and 
 # a lognormal SAD, and individuals randomly distributed in space
@@ -376,17 +377,17 @@ for these data (i.e., $\beta = \frac{\gamma}{\bar{\alpha}}$. Before doing so,
 what does it means when the $\alpha$-scale 
 curves are so closely aligned with the $\gamma$-scale curve? The overlapping 
 rarefaction curves means that the smaller ($\alpha$) scale samples are 
-effectively a random subsample of the larger ($\gamma$) scale. This makes sense, 
-because we know that the individuals of all species were distributed randomly 
-in space. Before diving into some beta-diversity metrics, let's look at how 
+effectively a random subsample of the larger ($\gamma$) scale [@blowes_global_2017;
+@chase_embracing_2018-3]. We know this to be true for these simulated data: 
+the individuals of all species were distributed randomly 
+in space (via a poisson point process model). 
+Before diving into some beta-diversity metrics, let's look at how 
 within species aggregation changes what we see.
 
 ```{r, warning=FALSE, class.source = 'fold.show', message=FALSE, fig.dim = c(8,4)}
-# set a RNG seed 
-set.seed(55)
 
 # simulate a community with 200 species and 5000 individuals, and 
-# a lognormal SAD, and individuals randomly distributed in space
+# a lognormal SAD, and individuals aggregated in space
 Spool <- 200
 Jpool <- 5000
 sim_aggr_comm <- sim_thomas_community(s_pool = Spool,
@@ -483,4 +484,25 @@ plot_grid(plot_samples,
           nrow = 1)
 ```
 
+Now, we see that the $\gamma$-scale curve does not fall directly on top of 
+the $\alpha$-scale curves. This means that the smaller scale samples no longer 
+capture a random subset of the species captured by all the samples combined. 
+This is due to within species aggregation. Environmental heterogeneity is 
+ubiqutious in nature - environmental conditions are typically more similar when
+in close proximity, either in space or time. This heterogeneity, and other processes,
+often result in
+species exhibiting varying degrees of within species aggregation. So, 
+communities - and hopefully our samples that we take to represent them - likely fall somewhere
+between these two extremes (of closely overlapping accumulation curves at the $\alpha$- and 
+$\gamma$-scales, and strongly diverging). 
+
+When we embrace the scale-dependent nature
+of biodiversity variation there are four components that 
+we'd like our biodiversity metrics to accurately describe: abundance, evenness,
+richness, and within species aggregation [@chase_embracing_2018-3; 
+@mcglinn_measurement_2019-1]. Changes in any (and all) of these components underpin
+variation in diversity. We stand to gain new insights with an accurate accounting
+of how they combine across scales .
+
+### Exercises
 ### References

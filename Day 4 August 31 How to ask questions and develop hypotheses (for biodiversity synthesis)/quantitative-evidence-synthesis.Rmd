@@ -1,0 +1,490 @@
+---
+title: 'Quantitative evidence synthesis for biodiversity'
+author: "Shane Blowes"
+date: "Shanghai 2024"
+output: 
+  html_document:
+    code_folding: hide
+bibliography: references2.bib  
+---
+  
+The use of quantitative evidence synthesis has accelerated exponentially since
+approximately the mid-1990s [@gurevitch2018meta].  
+
+![](/Users/sb25gaqy/Dropbox/4teaching/shanghai-biodiversity-synthesis-course-2024/Day 4 August 31 How to ask questions and develop hypotheses (for biodiversity synthesis)/meta-analysis and biodiversity change synthesis.png)   
+
+
+This broad trend for quantitative evidence synthesis, and meta-analysis in particular, 
+is also true for ecologists and conservation biologists [@anderson2021trends].
+
+![](/Users/sb25gaqy/Dropbox/4teaching/shanghai-biodiversity-synthesis-course-2024/Day 4 August 31 How to ask questions and develop hypotheses (for biodiversity synthesis)/evidence-synthesis-models-and-methods.png)   
+
+For biodiversity synthesis, two obstacles soon become apparent 
+when we start diving into the literature search for a meta-analysis. 
+
+First, the tyranny of the many indices will quickly become apparent: 
+no matter which effect size you target
+(e.g., log-ratio, Hedge's G, etc), the many different biodiversity measures (e.g.,
+species richness, total abundance, Shannon diversity, Simpson diversity,
+one of the Hill numbers, etc.) will limit 
+the number of studies you can collate. Second, the two things that we emphasise
+as being important for describing variation in biodiversity - scale and the 
+multiple components of abundance, evenness and richness - will be inaccessible
+for most meta-analyses. Multi-scale analyses are predominantly out of reach 
+because most studies will have only quantified biodiversity at a single scale. 
+Similarly, multi-component analyses will be constrained by the fact that most studies 
+will have used one or two metrics, and the scope for coherently combining these 
+metrics across studies will be limited.
+
+Even for a single metric such as species richness, a within system meta-analysis
+will risk comparing apples to oranges because different studies will likely have
+used different sample grains to sample the target assemblage. Let's do a simple
+simulation to examine the implication of variation in grain size for our ability 
+to generalise an effect size.
+
+### How does variation in sample grain confound average effect sizes?
+
+To examine how variation in grain size influences a meta-analysis, we will use
+simulations. Let's start by simulating an experiment that removes half of the 
+species in a community.
+
+```{r, warning=FALSE, class.source = 'fold.show', message=FALSE}
+library(tidyverse)
+library(mobsim)
+library(mobr)
+library(cowplot)
+
+# set a RNG seed 
+set.seed(42)
+
+# Set all communities to have 5000 individuals, 
+# a lognormal SAD, and individuals randomly distributed in space
+Jpool <- 2000
+
+# We want to treatment to half the number of species
+Spool_control <- 200
+# treatment removes 50% of the species
+Spool_treatment <- 0.5 * Spool_control
+
+# simulate a meta-analysis with twenty studies
+n_study <- 20
+
+meta_sim <- tibble(
+  Jpool = Jpool,
+  S_control = Spool_control,
+  S_treatment = Spool_treatment) %>% 
+  # create the n_studies
+  uncount(n_study, .remove = FALSE) %>% 
+  # here, we are interested in examining variation in sample grain.
+  # Draw some random quadrat sizes from a uniform distribution
+  mutate(sample_grain = runif(n_study,
+                              min = 0.01,
+                              max = 0.1)) %>% 
+  # create index to identify each study
+  mutate(study = as.character(1:n_study)) %>% 
+  # prepare to generate control and treatment communities for each study
+  group_by(study) %>% 
+  nest(data = c(Jpool, S_control, S_treatment,
+                sample_grain)) %>% 
+  # simulate poisson distribution of individuals for the controls and 
+  # treatments within each study
+  mutate(control_comm = map(data, 
+                            ~sim_poisson_community(
+                              s_pool = .x$S_control,
+                              n_sim = .x$Jpool,
+                              sad_type = 'lnorm',
+                              sad_coef = list('meanlog' = log(.x$S_control/.x$Jpool),
+                                              'sdlog' = 1))),
+         treatment_comm = map(data, 
+                              ~sim_poisson_community(
+                                s_pool = .x$S_treatment,
+                                n_sim = .x$Jpool,
+                                sad_type = 'lnorm',
+                                sad_coef = list('meanlog' = log(.x$S_treatment/.x$Jpool),
+                                                'sdlog' = 1)
+                                )
+                              )
+         ) %>% 
+  # to check our treatment worked calculate abundance and richness for the 
+  # whole community (which is the scale at which we applied the treatment)
+  mutate(control_comm_J = map(control_comm, ~nrow(.x$census)),
+         control_comm_S = map(control_comm, ~n_distinct(.x$census$species)),
+         treatment_comm_J = map(treatment_comm, ~nrow(.x$census)),
+         treatment_comm_S = map(treatment_comm, ~n_distinct(.x$census$species))) %>% 
+  # now, we want to get some samples from the controls and treatments
+  # we'll just keep the site x species matrix
+  mutate(control_samps = map2(control_comm, data, 
+                             ~ sample_quadrats(comm = .x,
+                                               # we'll take 5 samples
+                                               n_quadrats = 5,
+                                               # with the sample_grain for this study
+                                               quadrat_area = .y$sample_grain,
+                                               method = 'grid',
+                                               plot = FALSE)$spec_dat),
+         treatment_samps = map2(treatment_comm, data, 
+                             ~ sample_quadrats(comm = .x,
+                                               # we'll take 5 samples
+                                               n_quadrats = 5,
+                                               # with the sample_grain for this study
+                                               quadrat_area = .y$sample_grain,
+                                               method = 'grid',
+                                               plot = FALSE)$spec_dat)) %>% 
+  # let's calculate metrics for abundance, richness, and the ENS conversion
+  # of PIE (for inferences about evenness)
+  # note, because we're simulating what we'd typically find when doing a meta-analysis,
+  # we're only going to do the calculations at a single scale
+  mutate(control_J = map(control_samps, ~ rowSums(.x)),
+         control_S = map(control_samps, ~ vegan::specnumber(.x, MARGIN = 1)),
+         control_SPIE = map(control_samps, ~ mobr::calc_comm_div(.x, index = 'S_PIE', 
+                                                                extrapolate = FALSE,
+                                                                scales = 'alpha')$value),
+         treatment_J = map(treatment_samps, ~ rowSums(.x)),
+         treatment_S = map(treatment_samps, ~ vegan::specnumber(.x, MARGIN = 1)),
+         treatment_SPIE = map(treatment_samps, ~ mobr::calc_comm_div(.x, index = 'S_PIE', 
+                                                                extrapolate = FALSE,
+                                                                scales = 'alpha')$value)) %>% 
+  ungroup()
+  
+# calculate log-ratio effect sizes
+effect_sizes <- meta_sim %>% 
+  unnest(c(data, control_J, control_S, control_SPIE,
+           treatment_J, treatment_S, treatment_SPIE)) %>% 
+  mutate(J_LRR = log(treatment_J/control_J),
+         S_LRR = log(treatment_S/control_S),
+         SPIE_LRR = log(treatment_SPIE/control_SPIE))
+
+```
+
+We're not focused on the details of meta-analysis today, so we won't fit any
+statistical models. Instead, we'll look at the data and calculate 
+some averages.
+
+```{r, warning=FALSE, class.source = 'fold.show', message=FALSE, fig.dim = c(6,4)}
+
+# plot come effect sizes, let's start with total numbers of individuals
+effect_sizes %>% 
+  # calculate the mean and sd
+  mutate(J_LRR_mean = mean(J_LRR),
+         J_LRR_sd = sd(J_LRR)) %>% 
+  ggplot() +
+  geom_rect(aes(xmin = -Inf, xmax = Inf,
+                  ymin = J_LRR_mean - J_LRR_sd,
+                  ymax = J_LRR_mean + J_LRR_sd),
+                fill = 'light grey') +
+  geom_hline(aes(yintercept = J_LRR_mean)) +
+  # and plot the known effect size on total abundance
+  geom_hline(yintercept = 0, lty = 2) +
+  geom_point(aes(x = study, y = J_LRR)) +
+  labs(x = 'Study',
+       y = 'Effect size (LRR)',
+       subtitle = 'Treatment effect on total abundance') +
+  theme_bw()
+```
+
+Nice. We have got the no effect on total abundance approximately 
+right.
+
+What about species richness?
+
+```{r, warning=FALSE, class.source = 'fold.show', message=FALSE, fig.dim = c(6,4)}
+# now species richness, note our known effect size
+S_LRR_known <- log(0.5)
+
+effect_sizes %>% 
+  # calculate the mean and sd
+  mutate(S_LRR_mean = mean(S_LRR),
+         S_LRR_sd = sd(S_LRR)) %>% 
+  ggplot() +
+  geom_rect(aes(xmin = -Inf, xmax = Inf,
+                  ymin = S_LRR_mean - S_LRR_sd,
+                  ymax = S_LRR_mean + S_LRR_sd),
+                fill = 'light grey') +
+  geom_hline(aes(yintercept = S_LRR_mean)) +
+  # let's plot the known effect size as a dashed line
+  geom_hline(yintercept = S_LRR_known, linetype = 2) + 
+  geom_point(aes(x = study, y = S_LRR)) +
+  labs(x = 'Study',
+       y = 'Effect size (LRR)',
+       subtitle = 'Treatment effect on species richness') +
+  theme_bw()
+
+```
+
+Here, it looks like we have underestimated the effect. The magnitude of our 
+error would depend on the distribution of grain sizes, and the scale at which the
+effect impacted biodiversity, both of which would likely vary among studies. 
+Here we know that the effect was applied at a grain size 
+of one, while our grain sizes between 0.01 and 0.1. In an empirical synthesis of  
+observational data, we would not know the true effect (nor the scale at which
+it would impact the community).
+
+An important recommendation for all biodiversity syntheses, and in particular, 
+for meta-analyses with a diversity measure as the response variable is to plot
+effect sizes as a function of scale (e.g., sample grain and extent) 
+[@spake_implications_2021].
+
+```{r, warning=FALSE, class.source = 'fold.show', message=FALSE, fig.dim = c(6,4)}
+effect_sizes %>% 
+  # calculate the mean and sd of the sample ESs
+  mutate(S_LRR_mean = mean(S_LRR),
+         S_LRR_sd = sd(S_LRR)) %>% 
+  ggplot() +
+  geom_hline(aes(yintercept = S_LRR_mean)) +
+  # plot the known effect size as a dashed line
+  geom_hline(yintercept = S_LRR_known, linetype = 2) + 
+  # plot the sample effect sizes
+  geom_point(aes(x = sample_grain, y = S_LRR)) +
+  # to see if we've got any evidence for scale-dependence
+  # we'll visualise a linear model with the effect sizes as a function of
+  # grain size
+  stat_smooth(aes(x = sample_grain, y = S_LRR),
+              method = 'lm') +
+  labs(x = 'Grain size',
+       y = 'Effect size (LRR)',
+       subtitle = 'Estimated treatment effect on species richness') +
+  theme_bw()
+
+```
+
+Some grain-size dependence in the average effect size for species richness. And
+larger grains are closer to the known ES.
+
+Let's repeat the exercise, but this time we'll have the treatment effect the
+numbers of individuals. Before we start, what is your expectation? Do you think
+we'll be able to accurately recover the known effect size for total numbers of 
+individuals independently of the grain size variation? What about species richness?
+
+```{r, warning=FALSE, class.source = 'fold.show', message=FALSE}
+# this time both control and treatment have the same number of species
+Spool <- 200
+
+# Simulate different communities sizes for the control and treatment
+Jpool_control <- 5000
+# treatment removes 60% of the individuals
+Jpool_treatment <- 2000
+
+
+meta_sim2 <- tibble(
+  Spool = Spool,
+  J_control = Jpool_control,
+  J_treatment = Jpool_treatment,
+) %>% 
+  # create the n_studies
+  uncount(n_study, .remove = FALSE) %>% 
+  # here, we are interested in examining how variation in sample grain.
+  # So, we'll draw some random quadrat sizes from a uniform distribution
+  mutate(sample_grain = runif(n_study,
+                              min = 0.01,
+                              max = 0.1)) %>% 
+  # create index to identify each study
+  mutate(study = 1:n_study) %>% 
+  # prepare to generate control and treatment communities for each study
+  group_by(study) %>% 
+  nest(data = c(Spool, J_control, J_treatment,
+                sample_grain)) %>% 
+  # simulate poisson distribution of individuals for the controls and 
+  # treatments within each study
+  mutate(control_comm = map(data, ~ sim_poisson_community(s_pool = .x$Spool,
+                                          n_sim = .x$J_control,
+                                          sad_type = 'lnorm',
+                                          sad_coef = list('meanlog' = log(.x$Spool/.x$J_control),
+                                                          'sdlog' = 1))),
+         treatment_comm = map(data, ~ sim_poisson_community(s_pool = .x$Spool,
+                                          n_sim = .x$J_treatment,
+                                          sad_type = 'lnorm',
+                                          sad_coef = list('meanlog' = log(.x$Spool/.x$J_treatment),
+                                                          'sdlog' = 1)))) %>% 
+  # now, we want to get some samples from the controls and treatments
+  # we'll just keep the site x species matrix
+  mutate(control_samps = map2(control_comm, data, 
+                             ~ sample_quadrats(comm = .x,
+                                               # we'll take 5 samples
+                                               n_quadrats = 5,
+                                               # with the sample_grain for this study
+                                               quadrat_area = .y$sample_grain,
+                                               method = 'grid',
+                                               plot = FALSE)$spec_dat),
+         treatment_samps = map2(treatment_comm, data, 
+                             ~ sample_quadrats(comm = .x,
+                                               # we'll take 5 samples
+                                               n_quadrats = 5,
+                                               # with the sample_grain for this study
+                                               quadrat_area = .y$sample_grain,
+                                               method = 'grid',
+                                               plot = FALSE)$spec_dat)) %>% 
+  # let's calculate metrics for abundance, richness, and the ENS conversion
+  # of PIE (for inferences about evenness)
+  # note, because we're simulating what we'd typically find when doing a meta-analysis,
+  # we're only going to do the calculations at a single scale
+  mutate(control_J = map(control_samps, ~ rowSums(.x)),
+         control_S = map(control_samps, ~ vegan::specnumber(.x, MARGIN = 1)),
+         control_SPIE = map(control_samps, ~ mobr::calc_comm_div(.x, index = 'S_PIE', 
+                                                                extrapolate = FALSE,
+                                                                scales = 'alpha')$value),
+         treatment_J = map(treatment_samps, ~ rowSums(.x)),
+         treatment_S = map(treatment_samps, ~ vegan::specnumber(.x, MARGIN = 1)),
+         treatment_SPIE = map(treatment_samps, ~ mobr::calc_comm_div(.x, index = 'S_PIE', 
+                                                                extrapolate = FALSE,
+                                                                scales = 'alpha')$value)) %>% 
+  ungroup()
+  
+# calculate log-ratio effect sizes
+effect_sizes2 <- meta_sim2 %>% 
+  unnest(c(data, control_J, control_S, control_SPIE,
+           treatment_J, treatment_S, treatment_SPIE)) %>% 
+  mutate(J_LRR = log(treatment_J/control_J),
+         S_LRR = log(treatment_S/control_S),
+         SPIE_LRR = log(treatment_SPIE/control_SPIE))
+```
+
+Again, we'll focus on visual inspection and the averages instead of fitting
+statistical models and a more formal analysis.
+
+```{r, warning=FALSE, class.source = 'fold.show', message=FALSE, fig.dim = c(6,4)}
+
+# plot come effect sizes, let's start with total numbers of individuals
+J_LRR_known = log(2/5)
+  
+effect_sizes2 %>% 
+  # calculate the mean and sd
+  mutate(J_LRR_mean = mean(J_LRR),
+         J_LRR_sd = sd(J_LRR)) %>% 
+  ggplot() +
+  geom_rect(aes(xmin = -Inf, xmax = Inf,
+                  ymin = J_LRR_mean - J_LRR_sd,
+                  ymax = J_LRR_mean + J_LRR_sd),
+                fill = 'light grey') +
+  geom_hline(aes(yintercept = J_LRR_mean)) +
+  # and plot the known effect size on total abundance
+  geom_hline(yintercept = J_LRR_known, lty = 2) +
+  geom_point(aes(x = study, y = J_LRR)) +
+  labs(x = 'Study',
+       y = 'Effect size (LRR)',
+       subtitle = 'Estimated treatment effect on total abundance') +
+  theme_bw()
+```
+
+We still estimate the known effect on total numbers of individuals well. Why?
+
+What about species richness?
+
+```{r, warning=FALSE, class.source = 'fold.show', message=FALSE, fig.dim = c(6,4)}
+# now species richness, note our known effect size
+S_LRR_known <- 0
+
+effect_sizes2 %>% 
+  # calculate the mean and sd
+  mutate(S_LRR_mean = mean(S_LRR),
+         S_LRR_sd = sd(S_LRR)) %>% 
+  ggplot() +
+  geom_rect(aes(xmin = -Inf, xmax = Inf,
+                  ymin = S_LRR_mean - S_LRR_sd,
+                  ymax = S_LRR_mean + S_LRR_sd),
+                fill = 'light grey') +
+  geom_hline(aes(yintercept = S_LRR_mean)) +
+  # let's plot the known effect size as a dashed line
+  geom_hline(yintercept = S_LRR_known, linetype = 2) + 
+  geom_point(aes(x = study, y = S_LRR)) +
+  labs(x = 'Study',
+       y = 'Effect size (LRR)',
+       subtitle = 'Estimated treatment effect on species richness') +
+  theme_bw()
+
+```
+
+Now we've overestimated the effect on species richness! Again, the magnitude of our 
+error would depend on the distribution of grain sizes, and the scale at which the
+effect impacted biodiversity (both of which would be unknown in an empirical 
+meta-analysis, though here we know that there was no effect on community richness). 
+
+Let's look at whether we have strong scale dependence in the effect sizes
+[@spake_implications_2021].
+
+```{r, warning=FALSE, class.source = 'fold.show', message=FALSE, fig.dim = c(6,4)}
+effect_sizes2 %>% 
+  # calculate the mean and sd
+  mutate(S_LRR_mean = mean(S_LRR),
+         S_LRR_sd = sd(S_LRR)) %>% 
+  ggplot() +
+  geom_hline(aes(yintercept = S_LRR_mean)) +
+  # let's plot the known effect size as a dashed line
+  geom_hline(yintercept = S_LRR_known, linetype = 2) + 
+  geom_point(aes(x = sample_grain, y = S_LRR)) +
+  # let's see if we've got any evidence for scale-dependence
+  # by fitting a linear model to the effect size as a function of
+  # grain size
+  stat_smooth(aes(x = sample_grain, y = S_LRR),
+              method = 'lm') +
+  labs(x = 'Grain size',
+       y = 'Effect size (LRR)',
+       subtitle = 'Estimated treatment effect on species richness') +
+  theme_bw()
+
+```
+
+Our effect size estimates are larger at smaller scales, and decrease with
+increasing grain size.
+Does this make sense in light of the exercise with the candy? Again, we get 
+closer to the known ES with larger grains. Why?
+
+What happened to evenness? Is our estimated ES grain-size dependent?
+
+```{r, warning=FALSE, class.source = 'fold.show', message=FALSE, fig.dim = c(6,4)}
+effect_sizes2 %>% 
+  # calculate the mean and sd
+  mutate(SPIE_LRR_mean = mean(SPIE_LRR),
+         SPIE_LRR_sd = sd(SPIE_LRR)) %>% 
+  ggplot() +
+  geom_hline(aes(yintercept = SPIE_LRR_mean)) +
+  # let's plot the known effect size as a dashed line
+  geom_hline(yintercept = 0, linetype = 2) + 
+  geom_point(aes(x = sample_grain, y = SPIE_LRR)) +
+  # let's see if we've got any evidence for scale-dependence
+  # by fitting a linear model to the effect size as a function of
+  # grain size
+  stat_smooth(aes(x = sample_grain, y = SPIE_LRR),
+              method = 'lm') +
+  labs(x = 'Grain size',
+       y = 'Effect size (LRR)',
+       subtitle = 'Estimated treatment effect on evenness') +
+  theme_bw()
+```
+
+### Exercise: What about within-species aggregation?
+
+Our initial simulations had communities where individuals were distributed 
+randomly in space. This helped simplify interpreting what we found, but is 
+likely unrealistic for most communities (though it might be appropriate for
+some experimental conditions). Repeat the simulations, but this time add some
+within species aggregation.
+
+# Can we solve any of these problems?
+
+Variation in grain size can limit our ability to do biodiversity
+synthesis. This is especially true when we attempt to synthesise information 
+using meta-analysis. But what about if we can get the **raw** data? In this
+context, raw data is the abundance of all 
+the species in a sample, as opposed to a single number (i.e., a diversity measure
+or index) that summarises the sample (like species richness or Shannon diversity).
+
+Let's first have a look at a Species Abundance Distribution (SAD).
+
+```{r, warning=FALSE, class.source = 'fold.show', message=FALSE}
+sim_sad(s_pool = 10, n_sim = 200, sad_type = 'lnorm', 
+        sad_coef = list('meanlog' = log(10/200),
+                        'sdlog' = 1))
+```
+
+The key here is that we have the abundance of each species. Not a single number
+summarising the diversity for the whole sample.
+With this information - counts of individuals are ideal - we can use 
+rarefaction to do a better comparison between samples with different grains. 
+Specifically, we will standardise our samples to have the same number of individuals.
+And then compare the expected diversity for a common (standardised) number of 
+individuals. Importantly, this standardisation can only be applied directly at the
+alpha-scale (where we are standardising the sampling grain). Additional 
+work is required at the gamma-scale, where variation in extent can also confound
+comparisons.
+
+
+### References

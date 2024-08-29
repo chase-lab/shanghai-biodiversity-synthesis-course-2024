@@ -296,7 +296,7 @@ samps <- mobsim::sample_quadrats(comm = sim_poisson_comm,
                 n_quadrats = 5, 
                 quadrat_area = quad_area,
                 method = 'random',
-                avoid_overlap = FALSE,
+                avoid_overlap = TRUE,
                 plot = FALSE)
 
 quad_xy <- samps$xy_dat %>% 
@@ -415,7 +415,7 @@ samps2 <- mobsim::sample_quadrats(comm = sim_aggr_comm,
                 # other spatial distributions for quadrats are available:
                 # grids and transects
                 method = 'random',
-                avoid_overlap = FALSE, # setting this to true breaks currently!
+                avoid_overlap = TRUE, 
                 plot = FALSE)
 
 # xy_dat has the xy coordinates for the lower left corner of every quadrat sample

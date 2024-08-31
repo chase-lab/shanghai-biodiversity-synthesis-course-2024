@@ -42,11 +42,14 @@ used different sample grains to sample the target assemblage. Let's do a simple
 simulation to examine the implication of variation in grain size for our ability 
 to generalise an effect size.
 
-### How does variation in sample grain confound average effect sizes?
+### How can scale, e.g., grain size, influence a meta-analysis? 
 
 To examine how variation in grain size influences a meta-analysis, we will use
 simulations. Let's start by simulating an experiment that removes half of the 
-species in a community.
+species in a community. This is similar to the experiment we did with the candy,
+but now we will have the treatment remove species instead of individuals. There
+are a few common effect sizes used in meta-analysis, here we'll use the log-ratio
+[@hedges1999meta].
 
 ```{r, warning=FALSE, class.source = 'fold.show', message=FALSE}
 library(tidyverse)
@@ -157,7 +160,7 @@ effect_sizes <- meta_sim %>%
 
 We're not focused on the details of meta-analysis today, so we won't fit any
 statistical models. Instead, we'll look at the data and calculate 
-some averages.
+some averages. 
 
 ```{r, warning=FALSE, class.source = 'fold.show', message=FALSE, fig.dim = c(6,4)}
 
@@ -210,11 +213,13 @@ effect_sizes %>%
 
 ```
 
-Here, it looks like we have underestimated the effect. The magnitude of our 
-error would depend on the distribution of grain sizes, and the scale at which the
+Here, it looks like we got the sign (direction) of the effect right. But we have 
+underestimated the effect (sometimes called a magnitude error). The magnitude, i.e.,
+how much we under or overestimate the effect, would depend on the distribution 
+of grain sizes, and the scale at which the
 effect impacted biodiversity, both of which would likely vary among studies. 
 Here we know that the effect was applied at a grain size 
-of one, while our grain sizes between 0.01 and 0.1. In an empirical synthesis of  
+of one, while our grain sizes between 0.01 and 0.1. In an empirical synthesis of
 observational data, we would not know the true effect (nor the scale at which
 it would impact the community).
 
@@ -250,7 +255,9 @@ Some grain-size dependence in the average effect size for species richness. And
 larger grains are closer to the known ES.
 
 Let's repeat the exercise, but this time we'll have the treatment effect the
-numbers of individuals. Before we start, what is your expectation? Do you think
+numbers of individuals. This is exactly what we tried to do with the candy 
+experiment, but now it will be much easier to randomly remove individuals.
+Before we start, what is your expectation? Do you think
 we'll be able to accurately recover the known effect size for total numbers of 
 individuals independently of the grain size variation? What about species richness?
 
@@ -423,8 +430,7 @@ effect_sizes2 %>%
 ```
 
 Our effect size estimates are larger at smaller scales, and decrease with
-increasing grain size.
-Does this make sense in light of the exercise with the candy? Again, we get 
+increasing grain size. Again, we get 
 closer to the known ES with larger grains. Why?
 
 What happened to evenness? Is our estimated ES grain-size dependent?
@@ -486,5 +492,157 @@ alpha-scale (where we are standardising the sampling grain). Additional
 work is required at the gamma-scale, where variation in extent can also confound
 comparisons.
 
+Again, we'll use some simple simulations to illustrate how standardisation by 
+numbers of individuals can work. Using the data from our earlier simulated 
+experiment that removed species, we will standardise the sample
+effort before we calculate effect sizes.
 
+```{r, warning=FALSE, class.source = 'fold.show', message=FALSE}
+
+# For this exercise, we'll reuse the data we simulated earlier. But, now we want
+# use the SAD, i.e., the raw data from the sample, to standardise sampling effort
+# before we calculate the effect sizes. 
+
+# we want to work with the control_samps and treatment_samps
+effort_standardisation <-
+meta_sim %>% 
+  select(study, data, control_samps, treatment_samps) %>% 
+  # need long data for rarefaction
+  mutate(control_long = map(control_samps, 
+                            ~rownames_to_column(., var = 'site') %>% 
+                              pivot_longer(cols = !site,
+                                           names_to = 'species',
+                                           values_to = 'N')),
+         treatment_long = map(treatment_samps, 
+                            ~rownames_to_column(., var = 'site') %>% 
+                              pivot_longer(cols = !site,
+                                           names_to = 'species',
+                                           values_to = 'N'))) 
+  
+# let's separate out the control and treatment samples
+# calculate the IBR for each site
+control_long <- effort_standardisation %>% 
+  select(study, control_long) %>%
+  unnest(c(control_long)) %>% 
+  group_by(study, site) %>% 
+  nest(site_data = c(species, N)) %>% 
+  mutate(expected_richness = map(site_data, ~rarefaction(.x$N, method = 'IBR'))) %>% 
+  unnest(c(expected_richness)) %>% 
+  mutate(individuals = 1:n()) %>% 
+  ungroup() %>% 
+  # put the grain sizes back in
+  left_join(meta_sim %>% 
+              select(study, data) %>% 
+              unnest(c(data))) %>% 
+  mutate(treatment = 'control')
+
+treatment_long <- effort_standardisation %>% 
+  select(study, treatment_long) %>% 
+  unnest(c(treatment_long)) %>% 
+  group_by(study, site) %>% 
+  nest(site_data = c(species, N)) %>% 
+  mutate(expected_richness = map(site_data, ~rarefaction(.x$N, method = 'IBR'))) %>% 
+  unnest(c(expected_richness)) %>% 
+  mutate(individuals = 1:n()) %>% 
+  ungroup() %>% 
+  # put the grain sizes back in
+  left_join(meta_sim %>% 
+              select(study, data) %>% 
+              unnest(c(data))) %>% 
+  mutate(treatment = 'removal')
+```
+
+First, let's use rarefaction curves to visualise the samples. And we'll add a 
+vertical line showing the minimum number of individuals across all the samples.
+
+```{r, warning=FALSE, class.source = 'fold.show', message=FALSE, fig.dim(c(8,4))}
+# join and plot
+bind_rows(control_long, 
+          treatment_long) %>% 
+  ggplot() +
+  facet_wrap(~treatment) +
+  geom_line(aes(x = individuals, y = expected_richness,
+                group = interaction(study, site), colour = sample_grain)) +
+  # add a vertical line with the minimum number of individuals across all of the
+  # samples
+  geom_vline(data = . %>% 
+               # first find the number of individuals in each sample
+               group_by(study, site, treatment) %>% 
+               filter(individuals == max(individuals)) %>% 
+               ungroup() %>% 
+               summarise(minJ = min(individuals)),
+             aes(xintercept = minJ), lty = 2)
+
+```
+
+Here, we are interested in rarefying to the number of individuals associated 
+with our smallest grain size. We can use this because total abundance scales
+approximately linearly with grain size.
+
+```{r, warning=FALSE, class.source = 'fold.show', message=FALSE}
+# plot mean J (of our samples) as a function of grain
+# total abundance scales approximately linearly
+bind_rows(control_long,
+          treatment_long) %>% 
+  group_by(site, sample_grain) %>% 
+  summarise(J = n()) %>% 
+  group_by(sample_grain) %>% 
+  summarise(Jbar = mean(J)) %>% 
+  ungroup() %>% 
+  ggplot() + 
+  geom_point(aes(x = sample_grain, y = Jbar)) +
+  stat_smooth(aes(x = sample_grain, y = Jbar),
+              method = 'gam') +
+  labs(x = 'Sample grain',
+       y = 'Average number of individuals')
+
+# want to get average abundance in the samples with the smallest grain.
+# this will become our target number of individuals that we will interpolate
+# the other samples to
+target_J = bind_rows(control_long,
+          treatment_long) %>% 
+  filter(sample_grain == min(sample_grain)) %>% 
+  group_by(study, site, treatment, sample_grain) %>% 
+  summarise(J = n()) %>% 
+  group_by(sample_grain) %>% 
+  summarise(Jbar = round(mean(J))) 
+
+# now calculate expected richness for target_J
+effort_standardisation <- effort_standardisation %>% 
+  mutate(control_expectedS = map(control_samps, ~vegan::rarefy(., sample = target_J)[,2]),
+         treatment_expectedS = map(treatment_samps, ~vegan::rarefy(., sample = target_J)[,2]))
+
+standardised_effect_sizes <- effort_standardisation %>% 
+  unnest(c(data, control_expectedS, treatment_expectedS)) %>% 
+  mutate(expected_S_LRR = log(treatment_expectedS/control_expectedS))
+
+standardised_effect_sizes %>% 
+  # calculate the mean and sd of the effort-standardised effect sizes
+  mutate(LRR_mean = mean(expected_S_LRR),
+         LRR_sd = sd(expected_S_LRR)) %>% 
+  ggplot() +
+  geom_hline(aes(yintercept = LRR_mean)) +
+  # plot the effort-standardised effect sizes
+  geom_point(aes(x = sample_grain, y = expected_S_LRR)) +
+  # to see if we've got any evidence for scale-dependence
+  # we'll visualise a linear model with the effect sizes as a function of
+  # grain size
+  stat_smooth(aes(x = sample_grain, y = expected_S_LRR),
+              method = 'lm') +
+  labs(x = 'Grain size',
+       y = 'Effect size (LRR)',
+       subtitle = 'Estimated treatment effect on effort-standardised species richness') +
+  theme_bw()
+
+```
+
+We still underestimate the known effect of the treatment on species richness. 
+This is because the grain of our samples is small compared to the scale at 
+which the effect modified species richness.
+
+However, we have at largely removed the grain size dependence of the effect size.
+And the variation in the effect sizes that remains, can more reasonably be compared.
+i.e., some studies had a smaller effect than average, others had a larger effect
+than the average.
+effect sizes by standardising sample effort 
 ### References
